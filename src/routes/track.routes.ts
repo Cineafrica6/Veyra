@@ -16,6 +16,8 @@ import {
     unsuspendMember,
     promoteToAdmin,
     demoteFromAdmin,
+    dailyCheckIn,
+    deleteTrack,
 } from '../controllers';
 import {
     authenticate,
@@ -390,5 +392,60 @@ router.delete('/:id/members/:targetUserId/suspend', unsuspendMember);
 // Promote/Demote routes
 router.post('/:id/members/:targetUserId/promote', promoteToAdmin);
 router.delete('/:id/members/:targetUserId/promote', demoteFromAdmin);
+
+/**
+ * @swagger
+ * /api/tracks/{id}/check-in:
+ *   post:
+ *     summary: Submit a daily check-in (streak only)
+ *     tags: [Tracks]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               note:
+ *                 type: string
+ *                 maxLength: 140
+ *     responses:
+ *       201:
+ *         description: Check-in successful
+ *       403:
+ *         description: Not a member
+ *       409:
+ *         description: Already checked in today
+ */
+router.post('/:id/check-in', requireTrackMember, dailyCheckIn);
+
+/**
+ * @swagger
+ * /api/tracks/{id}:
+ *   delete:
+ *     summary: Delete a track (admin only)
+ *     tags: [Tracks]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Track deleted
+ *       403:
+ *         description: Access denied
+ */
+router.delete('/:id', authenticate, deleteTrack);
 
 export default router;

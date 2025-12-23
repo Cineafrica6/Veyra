@@ -8,6 +8,9 @@ import {
     addMember,
     updateMemberRole,
     removeMember,
+    joinOrganization,
+    regenerateInvite,
+    toggleInvite,
 } from '../controllers';
 import { authenticate, requireOrgRole } from '../middleware';
 
@@ -42,6 +45,35 @@ router.use(authenticate);
  *         description: Invalid input
  */
 router.post('/', createOrganization);
+
+/**
+ * @swagger
+ * /api/organizations/join:
+ *   post:
+ *     summary: Join organization via invite code
+ *     tags: [Organizations]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - inviteCode
+ *             properties:
+ *               inviteCode:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Joined successfully
+ *       404:
+ *         description: Invalid code
+ *       409:
+ *         description: Already a member
+ */
+router.post('/join', joinOrganization);
 
 /**
  * @swagger
@@ -119,6 +151,57 @@ router.get('/:id', requireOrgRole('owner', 'admin', 'member'), getOrganization);
  *         description: Access denied
  */
 router.patch('/:id', requireOrgRole('owner', 'admin'), updateOrganization);
+
+/**
+ * @swagger
+ * /api/organizations/{id}/regenerate-invite:
+ *   post:
+ *     summary: Regenerate invite code (owner/admin only)
+ *     tags: [Organizations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: New code generated
+ */
+router.post('/:id/regenerate-invite', requireOrgRole('owner', 'admin'), regenerateInvite);
+
+/**
+ * @swagger
+ * /api/organizations/{id}/invite:
+ *   patch:
+ *     summary: Toggle invite status (owner/admin only)
+ *     tags: [Organizations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - enabled
+ *             properties:
+ *               enabled:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Status updated
+ */
+router.patch('/:id/invite', requireOrgRole('owner', 'admin'), toggleInvite);
 
 /**
  * @swagger

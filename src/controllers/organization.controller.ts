@@ -8,6 +8,7 @@ import {
     sendNotFound,
     sendForbidden,
     ValidationError,
+    generateInviteCode,
 } from '../utils';
 
 /**
@@ -112,6 +113,10 @@ export const getOrganization = async (
         slug: organization.slug,
         role: membership?.role,
         createdAt: organization.createdAt,
+        ...((membership?.role === 'owner' || membership?.role === 'admin') && {
+            inviteCode: organization.inviteCode,
+            inviteEnabled: organization.inviteEnabled,
+        }),
     });
 };
 
@@ -389,6 +394,129 @@ export const verifySudoPassword = async (
     }
 
     sendSuccess(res, { verified: true });
+};
+
+/**
+ * DELETE /api/organizations/:id
+ * Delete organization (owner only, requires sudo password)
+ */
+/**
+ * POST /api/organizations/join
+ * Join organization via invite code
+ */
+export const joinOrganization = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { inviteCode } = req.body;
+    const userId = req.user!._id;
+
+    if (!inviteCode) {
+        sendError(res, 'Invite code is required');
+        return;
+    }
+
+    const organization = await Organization.findOne({
+        inviteCode: inviteCode.toUpperCase(),
+    });
+
+    if (!organization) {
+        sendNotFound(res, 'Invalid invite code');
+        return;
+    }
+
+    if (!organization.inviteEnabled) {
+        sendError(res, 'Invites are disabled for this organization');
+        return;
+    }
+
+    // Check if user is already a member
+    const existingMembership = await OrganizationMembership.findOne({
+        userId,
+        organizationId: organization._id,
+    });
+
+    if (existingMembership) {
+        sendError(res, 'You are already a member of this organization', 409);
+        return;
+    }
+
+    // Create membership
+    await OrganizationMembership.create({
+        userId,
+        organizationId: organization._id,
+        role: 'member',
+    });
+
+    sendSuccess(res, {
+        organizationId: organization._id,
+        name: organization.name,
+        slug: organization.slug,
+        message: 'Successfully joined the organization',
+    });
+};
+
+/**
+ * POST /api/organizations/:id/regenerate-invite
+ * Regenerate invite code (owner/admin only)
+ */
+export const regenerateInvite = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+
+    const organization = await Organization.findById(id);
+    if (!organization) {
+        sendNotFound(res, 'Organization not found');
+        return;
+    }
+
+    // Check permissions (owner/admin)
+    const membership = req.orgMembership;
+    if (!membership || !['owner', 'admin'].includes(membership.role)) {
+        sendForbidden(res, 'Only admins/owners can regenerate invite codes');
+        return;
+    }
+
+    organization.inviteCode = generateInviteCode();
+    await organization.save();
+
+    sendSuccess(res, {
+        inviteCode: organization.inviteCode,
+    });
+};
+
+/**
+ * PATCH /api/organizations/:id/invite
+ * Toggle invite status (owner/admin only)
+ */
+export const toggleInvite = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+    const { enabled } = req.body;
+
+    const organization = await Organization.findById(id);
+    if (!organization) {
+        sendNotFound(res, 'Organization not found');
+        return;
+    }
+
+    // Check permissions (owner/admin)
+    const membership = req.orgMembership;
+    if (!membership || !['owner', 'admin'].includes(membership.role)) {
+        sendForbidden(res, 'Only admins/owners can toggle invite status');
+        return;
+    }
+
+    organization.inviteEnabled = Boolean(enabled);
+    await organization.save();
+
+    sendSuccess(res, {
+        inviteEnabled: organization.inviteEnabled,
+    });
 };
 
 /**

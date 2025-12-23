@@ -20,6 +20,8 @@ export interface IOrganization extends Document {
     description?: string;
     ownerId: Types.ObjectId;
     sudoPasswordHash?: string;
+    inviteCode: string;
+    inviteEnabled: boolean;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -114,4 +116,15 @@ export interface LeaderboardEntry {
     avatarUrl?: string;
     totalScore: number;
     submissionCount: number;
+}
+
+// Daily Check-In types
+export interface IDailyCheckIn extends Document {
+    _id: Types.ObjectId;
+    userId: Types.ObjectId;
+    trackId: Types.ObjectId;
+    organizationId: Types.ObjectId;
+    date: Date; // Normalized to midnight UTC
+    note?: string;
+    createdAt: Date;
 }

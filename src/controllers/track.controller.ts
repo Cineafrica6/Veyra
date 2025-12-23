@@ -6,6 +6,8 @@ import {
     sendCreated,
     sendError,
     sendNotFound,
+    sendForbidden,
+    ValidationError,
     generateInviteCode,
 } from '../utils';
 
@@ -139,15 +141,42 @@ export const getMyTracks = async (
         .populate('organizationId', 'name')
         .lean();
 
-    const result = tracks.map((t: any) => ({
-        id: t._id,
-        name: t.name,
-        description: t.description,
-        organizationName: t.organizationId?.name,
-        organizationId: t.organizationId?._id,
-        weekStartDay: t.weekStartDay,
-        memberCount: t.memberCount,
-    }));
+    const result = tracks.map((t: any) => {
+        const membership = trackMemberships.find(
+            (m) => m.trackId.toString() === t._id.toString()
+        );
+
+        // Check if checked in today
+        const now = new Date();
+        const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        const lastCheckIn = membership?.lastSubmissionDate; // Reuse field
+
+        // Simple check: is lastCheckIn >= today?
+        // Note: lastSubmissionDate is a full Date timestamp. 
+        // We really should check against the normalized date logic, but for UI "disabled state",
+        // we can check if lastSubmissionDate was "today".
+
+        let hasCheckedInToday = false;
+        if (lastCheckIn) {
+            const lastDate = new Date(lastCheckIn);
+            const lastDateNormalized = new Date(Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), lastDate.getUTCDate()));
+            if (lastDateNormalized.getTime() === today.getTime()) {
+                hasCheckedInToday = true;
+            }
+        }
+
+        return {
+            id: t._id,
+            name: t.name,
+            description: t.description,
+            organizationName: t.organizationId?.name,
+            organizationId: t.organizationId?._id,
+            weekStartDay: t.weekStartDay,
+            memberCount: t.memberCount,
+            currentStreak: membership?.currentStreak || 0,
+            hasCheckedInToday,
+        };
+    });
 
     sendSuccess(res, { tracks: result });
 };
@@ -815,5 +844,151 @@ export const demoteFromAdmin = async (
     targetMembership.role = 'member';
     await targetMembership.save();
 
-    sendSuccess(res, { message: 'Member demoted from track admin' });
+    sendSuccess(res, { message: 'Track admin demoted to member' });
 };
+
+/**
+ * DELETE /api/tracks/:id
+ * Delete a track (track admin or org admin/owner)
+ */
+export const deleteTrack = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+    const userId = req.user!._id;
+
+    const track = await Track.findById(id);
+    if (!track) {
+        sendNotFound(res, 'Track not found');
+        return;
+    }
+
+    // Check permissions
+    const requesterTrackMembership = await TrackMembership.findOne({
+        userId,
+        trackId: id,
+    });
+
+    const requesterOrgMembership = await OrganizationMembership.findOne({
+        userId,
+        organizationId: track.organizationId,
+    });
+
+    const isAdmin =
+        requesterTrackMembership?.role === 'admin' ||
+        requesterOrgMembership?.role === 'owner' ||
+        requesterOrgMembership?.role === 'admin';
+
+    if (!isAdmin) {
+        sendForbidden(res, 'Only admins can delete the track');
+        return;
+    }
+
+    // Import models to delete related data
+    const { Submission, Quiz, QuizResponse, DailyCheckIn } = await import('../models');
+
+    // Delete related data
+    await QuizResponse.deleteMany({ quizId: { $in: await Quiz.find({ trackId: id }).distinct('_id') } });
+    await Quiz.deleteMany({ trackId: id });
+    await Submission.deleteMany({ trackId: id });
+    await DailyCheckIn.deleteMany({ trackId: id });
+    await TrackMembership.deleteMany({ trackId: id });
+    await track.deleteOne();
+
+    sendSuccess(res, { message: 'Track deleted successfully' });
+};
+
+
+/**
+ * POST /api/tracks/:id/check-in
+ * Submit a daily check-in
+ */
+export const dailyCheckIn = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+    const { note } = req.body; // Optional note
+    const userId = req.user!._id;
+
+    // 1. Verify Track exists
+    const track = await Track.findById(id);
+    if (!track) {
+        sendNotFound(res, 'Track not found');
+        return;
+    }
+
+    // 2. Verify Membership
+    const membership = await TrackMembership.findOne({
+        userId,
+        trackId: id,
+    });
+
+    if (!membership || membership.status !== 'active') {
+        sendError(res, 'You are not an active member of this track', 403);
+        return;
+    }
+
+    // 3. Normalize Date (Midnight UTC)
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    // 4. Check for existing check-in
+    const { DailyCheckIn } = await import('../models'); // Lazy load to avoid circular deps if any
+    const existingCheckIn = await DailyCheckIn.findOne({
+        userId,
+        trackId: id,
+        date: today,
+    });
+
+    if (existingCheckIn) {
+        sendError(res, 'You have already checked in today', 409);
+        return;
+    }
+
+    // 5. Create Check-In
+    const checkIn = await DailyCheckIn.create({
+        userId,
+        trackId: id,
+        organizationId: track.organizationId,
+        date: today,
+        note: note ? note.trim().substring(0, 140) : undefined,
+    });
+
+    // 6. Calculate Streak Logic
+    // We need to see if they checked in YESTERDAY to increment streak.
+    // Otherwise, streak resets to 1.
+    const yesterday = new Date(today);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+
+    const yesterdayCheckIn = await DailyCheckIn.findOne({
+        userId,
+        trackId: id,
+        date: yesterday,
+    });
+
+    if (yesterdayCheckIn) {
+        // Streak continues
+        membership.currentStreak += 1;
+    } else {
+        // Streak broken (or first day) -> Reset to 1
+        membership.currentStreak = 1;
+    }
+
+    // Update longest streak if needed
+    if (membership.currentStreak > membership.longestStreak) {
+        membership.longestStreak = membership.currentStreak;
+    }
+
+    membership.lastSubmissionDate = now; // Keeping this field name for now as "last activity"
+    await membership.save();
+
+    sendCreated(res, {
+        checkInId: checkIn._id,
+        date: checkIn.date,
+        streak: membership.currentStreak,
+        message: 'Check-in successful! Streak updated.',
+    });
+};
+

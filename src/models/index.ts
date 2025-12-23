@@ -6,3 +6,4 @@ export { TrackMembership } from './TrackMembership';
 export { Submission } from './Submission';
 export { Quiz } from './Quiz';
 export { QuizResponse } from './QuizResponse';
+export { DailyCheckIn } from './DailyCheckIn';

@@ -1,5 +1,6 @@
 import mongoose, { Schema } from 'mongoose';
 import { IOrganization } from '../types';
+import { generateInviteCode } from '../utils';
 
 const organizationSchema = new Schema<IOrganization>(
     {
@@ -33,11 +34,28 @@ const organizationSchema = new Schema<IOrganization>(
             type: String,
             select: false, // Don't include in queries by default
         },
+        inviteCode: {
+            type: String,
+            unique: true,
+            index: true,
+        },
+        inviteEnabled: {
+            type: Boolean,
+            default: true,
+        },
     },
     {
         timestamps: true,
     }
 );
+
+// Generate invite code before saving if not present
+organizationSchema.pre('save', function (next) {
+    if (!this.inviteCode) {
+        this.inviteCode = generateInviteCode();
+    }
+    next();
+});
 
 // Helper to generate slug from name
 organizationSchema.statics.generateSlug = function (name: string): string {
