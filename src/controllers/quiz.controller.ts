@@ -173,8 +173,8 @@ export const submitQuizResponse = async (
         return;
     }
 
-    if (membership.isBanned) {
-        sendForbidden(res, 'You are banned from this track');
+    if (membership.status !== 'active') {
+        sendForbidden(res, 'You are not allowed to answer quizzes');
         return;
     }
 

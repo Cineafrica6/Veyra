@@ -330,29 +330,38 @@ export const verifySubmission = async (
         });
 
         if (membership) {
-            const { weekStart: currentWeekStart } = getWeekBoundariesUtil(
-                submission.weekStart,
-                track.weekStartDay
-            );
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
 
-            // Check if this is consecutive to last submission
-            if (isPreviousWeek(membership.lastSubmissionWeek, currentWeekStart, track.weekStartDay)) {
-                // Continue streak
-                membership.currentStreak += 1;
-            } else if (!membership.lastSubmissionWeek ||
-                membership.lastSubmissionWeek.getTime() !== currentWeekStart.getTime()) {
-                // Reset streak (not consecutive and not same week)
+            // Check if this is consecutive to last submission (daily streak)
+            const lastDate = membership.lastSubmissionDate;
+            if (lastDate) {
+                const lastDateStart = new Date(lastDate);
+                lastDateStart.setHours(0, 0, 0, 0);
+
+                const yesterday = new Date(today);
+                yesterday.setDate(yesterday.getDate() - 1);
+
+                if (lastDateStart.getTime() === yesterday.getTime()) {
+                    // Continue streak (submitted yesterday)
+                    membership.currentStreak += 1;
+                } else if (lastDateStart.getTime() !== today.getTime()) {
+                    // Reset streak (not yesterday and not today)
+                    membership.currentStreak = 1;
+                }
+                // If same day, don't change streak
+            } else {
+                // First submission
                 membership.currentStreak = 1;
             }
-            // If same week, don't change streak
 
             // Update longest streak
             if (membership.currentStreak > membership.longestStreak) {
                 membership.longestStreak = membership.currentStreak;
             }
 
-            // Update last submission week
-            membership.lastSubmissionWeek = currentWeekStart;
+            // Update last submission date
+            membership.lastSubmissionDate = today;
             await membership.save();
         }
     }

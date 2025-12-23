@@ -31,13 +31,45 @@ export function getWeekBoundaries(date: Date, weekStartDay: number = 1): {
 
 /**
  * Calculate streak multiplier based on current streak
- * Multiplier starts at 1.0 and increases by 0.1 for each consecutive week
- * Max multiplier is 2.0 (at 10+ week streak)
+ * Multiplier is 1.12x per consecutive day
+ * Formula: 1.0 + (streak_days * 0.12)
+ * Max multiplier is 3.0 (at ~17 day streak)
  */
 export function getStreakMultiplier(currentStreak: number): number {
     if (currentStreak <= 0) return 1.0;
-    const multiplier = 1.0 + (currentStreak * 0.1);
-    return Math.min(multiplier, 2.0); // Cap at 2x
+    const multiplier = 1.0 + (currentStreak * 0.12);
+    return Math.min(multiplier, 3.0); // Cap at 3x
+}
+
+/**
+ * Check if a date is yesterday relative to another date
+ */
+export function isYesterday(lastDate: Date | undefined, currentDate: Date): boolean {
+    if (!lastDate) return false;
+
+    const yesterday = new Date(currentDate);
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+
+    const lastDateStart = new Date(lastDate);
+    lastDateStart.setHours(0, 0, 0, 0);
+
+    return lastDateStart.getTime() === yesterday.getTime();
+}
+
+/**
+ * Check if two dates are the same day
+ */
+export function isSameDay(date1: Date | undefined, date2: Date): boolean {
+    if (!date1) return false;
+
+    const d1 = new Date(date1);
+    d1.setHours(0, 0, 0, 0);
+
+    const d2 = new Date(date2);
+    d2.setHours(0, 0, 0, 0);
+
+    return d1.getTime() === d2.getTime();
 }
 
 /**

@@ -121,6 +121,38 @@ export const listTracks = async (
 };
 
 /**
+ * GET /api/tracks/my-tracks
+ * Get all tracks the current user is a member of (across all organizations)
+ */
+export const getMyTracks = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const userId = req.user!._id;
+
+    // Find all track memberships for this user
+    const trackMemberships = await TrackMembership.find({ userId }).lean();
+    const trackIds = trackMemberships.map((m) => m.trackId);
+
+    // Get all tracks
+    const tracks = await Track.find({ _id: { $in: trackIds } })
+        .populate('organizationId', 'name')
+        .lean();
+
+    const result = tracks.map((t: any) => ({
+        id: t._id,
+        name: t.name,
+        description: t.description,
+        organizationName: t.organizationId?.name,
+        organizationId: t.organizationId?._id,
+        weekStartDay: t.weekStartDay,
+        memberCount: t.memberCount,
+    }));
+
+    sendSuccess(res, { tracks: result });
+};
+
+/**
  * GET /api/tracks/:id
  * Get track details
  */
@@ -514,7 +546,7 @@ export const banMember = async (
         return;
     }
 
-    targetMembership.isBanned = true;
+    targetMembership.status = 'banned';
     targetMembership.bannedAt = new Date();
     await targetMembership.save();
 
@@ -569,9 +601,219 @@ export const unbanMember = async (
         return;
     }
 
-    targetMembership.isBanned = false;
+    targetMembership.status = 'active';
     targetMembership.bannedAt = undefined;
     await targetMembership.save();
 
     sendSuccess(res, { message: 'Member unbanned successfully' });
+};
+
+/**
+ * POST /api/tracks/:id/members/:targetUserId/suspend
+ * Suspend a member (track admin only)
+ */
+export const suspendMember = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id, targetUserId } = req.params;
+    const { duration } = req.body; // Duration in days (optional, null = indefinite)
+    const requesterId = req.user!._id;
+
+    const track = await Track.findById(id);
+    if (!track) {
+        sendNotFound(res, 'Track not found');
+        return;
+    }
+
+    const requesterTrackMembership = await TrackMembership.findOne({
+        userId: requesterId,
+        trackId: id,
+    });
+
+    const requesterOrgMembership = await OrganizationMembership.findOne({
+        userId: requesterId,
+        organizationId: track.organizationId,
+    });
+
+    const isAdmin =
+        requesterTrackMembership?.role === 'admin' ||
+        requesterOrgMembership?.role === 'owner' ||
+        requesterOrgMembership?.role === 'admin';
+
+    if (!isAdmin) {
+        sendError(res, 'Only admins can suspend members', 403);
+        return;
+    }
+
+    const targetMembership = await TrackMembership.findOne({
+        userId: targetUserId,
+        trackId: id,
+    });
+
+    if (!targetMembership) {
+        sendNotFound(res, 'Member not found');
+        return;
+    }
+
+    if (targetMembership.role === 'admin') {
+        sendError(res, 'Cannot suspend track admins');
+        return;
+    }
+
+    targetMembership.status = 'suspended';
+    targetMembership.suspendedAt = new Date();
+    if (duration) {
+        targetMembership.suspendedUntil = new Date(Date.now() + duration * 24 * 60 * 60 * 1000);
+    } else {
+        targetMembership.suspendedUntil = undefined;
+    }
+    await targetMembership.save();
+
+    sendSuccess(res, {
+        message: 'Member suspended successfully',
+        suspendedUntil: targetMembership.suspendedUntil,
+    });
+};
+
+/**
+ * DELETE /api/tracks/:id/members/:targetUserId/suspend
+ * Unsuspend a member (track admin only)
+ */
+export const unsuspendMember = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id, targetUserId } = req.params;
+    const requesterId = req.user!._id;
+
+    const track = await Track.findById(id);
+    if (!track) {
+        sendNotFound(res, 'Track not found');
+        return;
+    }
+
+    const requesterTrackMembership = await TrackMembership.findOne({
+        userId: requesterId,
+        trackId: id,
+    });
+
+    const requesterOrgMembership = await OrganizationMembership.findOne({
+        userId: requesterId,
+        organizationId: track.organizationId,
+    });
+
+    const isAdmin =
+        requesterTrackMembership?.role === 'admin' ||
+        requesterOrgMembership?.role === 'owner' ||
+        requesterOrgMembership?.role === 'admin';
+
+    if (!isAdmin) {
+        sendError(res, 'Only admins can unsuspend members', 403);
+        return;
+    }
+
+    const targetMembership = await TrackMembership.findOne({
+        userId: targetUserId,
+        trackId: id,
+    });
+
+    if (!targetMembership) {
+        sendNotFound(res, 'Member not found');
+        return;
+    }
+
+    targetMembership.status = 'active';
+    targetMembership.suspendedAt = undefined;
+    targetMembership.suspendedUntil = undefined;
+    await targetMembership.save();
+
+    sendSuccess(res, { message: 'Member unsuspended successfully' });
+};
+
+/**
+ * POST /api/tracks/:id/members/:targetUserId/promote
+ * Promote member to track admin
+ */
+export const promoteToAdmin = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id, targetUserId } = req.params;
+    const requesterId = req.user!._id;
+
+    const track = await Track.findById(id);
+    if (!track) {
+        sendNotFound(res, 'Track not found');
+        return;
+    }
+
+    // Only org owners/admins can promote track admins
+    const requesterOrgMembership = await OrganizationMembership.findOne({
+        userId: requesterId,
+        organizationId: track.organizationId,
+    });
+
+    if (!requesterOrgMembership || !['owner', 'admin'].includes(requesterOrgMembership.role)) {
+        sendError(res, 'Only organization owners/admins can promote track admins', 403);
+        return;
+    }
+
+    const targetMembership = await TrackMembership.findOne({
+        userId: targetUserId,
+        trackId: id,
+    });
+
+    if (!targetMembership) {
+        sendNotFound(res, 'Member not found');
+        return;
+    }
+
+    targetMembership.role = 'admin';
+    await targetMembership.save();
+
+    sendSuccess(res, { message: 'Member promoted to track admin' });
+};
+
+/**
+ * DELETE /api/tracks/:id/members/:targetUserId/promote
+ * Demote track admin to member
+ */
+export const demoteFromAdmin = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id, targetUserId } = req.params;
+    const requesterId = req.user!._id;
+
+    const track = await Track.findById(id);
+    if (!track) {
+        sendNotFound(res, 'Track not found');
+        return;
+    }
+
+    const requesterOrgMembership = await OrganizationMembership.findOne({
+        userId: requesterId,
+        organizationId: track.organizationId,
+    });
+
+    if (!requesterOrgMembership || !['owner', 'admin'].includes(requesterOrgMembership.role)) {
+        sendError(res, 'Only organization owners/admins can demote track admins', 403);
+        return;
+    }
+
+    const targetMembership = await TrackMembership.findOne({
+        userId: targetUserId,
+        trackId: id,
+    });
+
+    if (!targetMembership) {
+        sendNotFound(res, 'Member not found');
+        return;
+    }
+
+    targetMembership.role = 'member';
+    await targetMembership.save();
+
+    sendSuccess(res, { message: 'Member demoted from track admin' });
 };

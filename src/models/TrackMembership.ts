@@ -18,14 +18,21 @@ const trackMembershipSchema = new Schema<ITrackMembership>(
             enum: ['admin', 'member'],
             default: 'member',
         },
-        isBanned: {
-            type: Boolean,
-            default: false,
+        status: {
+            type: String,
+            enum: ['active', 'suspended', 'banned'],
+            default: 'active',
+        },
+        suspendedAt: {
+            type: Date,
+        },
+        suspendedUntil: {
+            type: Date, // null = manual lift required
         },
         bannedAt: {
             type: Date,
         },
-        // Streak tracking
+        // Daily streak tracking
         currentStreak: {
             type: Number,
             default: 0,
@@ -34,8 +41,8 @@ const trackMembershipSchema = new Schema<ITrackMembership>(
             type: Number,
             default: 0,
         },
-        lastSubmissionWeek: {
-            type: Date, // Start of the last week they submitted
+        lastSubmissionDate: {
+            type: Date, // Last date they submitted (for daily streak)
         },
         joinedAt: {
             type: Date,
@@ -55,6 +62,9 @@ trackMembershipSchema.index({ trackId: 1 });
 
 // Index for finding all tracks of a user
 trackMembershipSchema.index({ userId: 1 });
+
+// Index for status filtering
+trackMembershipSchema.index({ trackId: 1, status: 1 });
 
 export const TrackMembership = mongoose.model<ITrackMembership>(
     'TrackMembership',

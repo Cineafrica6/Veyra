@@ -17,7 +17,9 @@ export interface IOrganization extends Document {
     _id: Types.ObjectId;
     name: string;
     slug: string;
+    description?: string;
     ownerId: Types.ObjectId;
+    sudoPasswordHash?: string;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -54,17 +56,20 @@ export interface ITrack extends Document {
 
 // Track membership types
 export type TrackRole = 'admin' | 'member';
+export type MemberStatus = 'active' | 'suspended' | 'banned';
 
 export interface ITrackMembership extends Document {
     _id: Types.ObjectId;
     userId: Types.ObjectId;
     trackId: Types.ObjectId;
     role: TrackRole;
-    isBanned: boolean;
+    status: MemberStatus;
+    suspendedAt?: Date;
+    suspendedUntil?: Date;
     bannedAt?: Date;
     currentStreak: number;
     longestStreak: number;
-    lastSubmissionWeek?: Date;
+    lastSubmissionDate?: Date;
     joinedAt: Date;
 }
 

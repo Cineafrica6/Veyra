@@ -18,11 +18,20 @@ const organizationSchema = new Schema<IOrganization>(
             trim: true,
             index: true,
         },
+        description: {
+            type: String,
+            trim: true,
+            maxlength: 500,
+        },
         ownerId: {
             type: Schema.Types.ObjectId,
             ref: 'User',
             required: true,
             index: true,
+        },
+        sudoPasswordHash: {
+            type: String,
+            select: false, // Don't include in queries by default
         },
     },
     {

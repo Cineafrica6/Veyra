@@ -322,3 +322,128 @@ export const removeMember = async (
 
     sendSuccess(res, { message: 'Member removed successfully' });
 };
+
+/**
+ * POST /api/organizations/:id/sudo-password
+ * Set sudo password for destructive operations (owner only)
+ */
+export const setSudoPassword = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+    const { password } = req.body;
+
+    if (!password || password.length < 6) {
+        sendError(res, 'Password must be at least 6 characters');
+        return;
+    }
+
+    // Only owner can set sudo password
+    if (req.orgMembership?.role !== 'owner') {
+        sendForbidden(res, 'Only owners can set sudo password');
+        return;
+    }
+
+    const bcrypt = await import('bcrypt');
+    const hash = await bcrypt.hash(password, 10);
+
+    await Organization.findByIdAndUpdate(id, { sudoPasswordHash: hash });
+
+    sendSuccess(res, { message: 'Sudo password set successfully' });
+};
+
+/**
+ * POST /api/organizations/:id/verify-sudo
+ * Verify sudo password
+ */
+export const verifySudoPassword = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+    const { password } = req.body;
+
+    if (!password) {
+        sendError(res, 'Password is required');
+        return;
+    }
+
+    const org = await Organization.findById(id).select('+sudoPasswordHash');
+    if (!org) {
+        sendNotFound(res, 'Organization not found');
+        return;
+    }
+
+    if (!org.sudoPasswordHash) {
+        sendError(res, 'No sudo password set. Set one first.');
+        return;
+    }
+
+    const bcrypt = await import('bcrypt');
+    const isValid = await bcrypt.compare(password, org.sudoPasswordHash);
+
+    if (!isValid) {
+        sendForbidden(res, 'Invalid sudo password');
+        return;
+    }
+
+    sendSuccess(res, { verified: true });
+};
+
+/**
+ * DELETE /api/organizations/:id
+ * Delete organization (owner only, requires sudo password)
+ */
+export const deleteOrganization = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+    const { sudoPassword } = req.body;
+
+    // Only owner can delete
+    if (req.orgMembership?.role !== 'owner') {
+        sendForbidden(res, 'Only owners can delete the organization');
+        return;
+    }
+
+    const org = await Organization.findById(id).select('+sudoPasswordHash');
+    if (!org) {
+        sendNotFound(res, 'Organization not found');
+        return;
+    }
+
+    // Require sudo password if set
+    if (org.sudoPasswordHash) {
+        if (!sudoPassword) {
+            sendError(res, 'Sudo password required for this action');
+            return;
+        }
+
+        const bcrypt = await import('bcrypt');
+        const isValid = await bcrypt.compare(sudoPassword, org.sudoPasswordHash);
+
+        if (!isValid) {
+            sendForbidden(res, 'Invalid sudo password');
+            return;
+        }
+    }
+
+    // Import Track and TrackMembership
+    const { Track, TrackMembership, Submission, Quiz, QuizResponse } = await import('../models');
+
+    // Delete all related data
+    const tracks = await Track.find({ organizationId: id });
+    const trackIds = tracks.map(t => t._id);
+
+    await QuizResponse.deleteMany({ quizId: { $in: await Quiz.find({ trackId: { $in: trackIds } }).distinct('_id') } });
+    await Quiz.deleteMany({ trackId: { $in: trackIds } });
+    await Submission.deleteMany({ trackId: { $in: trackIds } });
+    await TrackMembership.deleteMany({ trackId: { $in: trackIds } });
+    await Track.deleteMany({ organizationId: id });
+    await OrganizationMembership.deleteMany({ organizationId: id });
+    await org.deleteOne();
+
+    sendSuccess(res, { message: 'Organization deleted successfully' });
+};

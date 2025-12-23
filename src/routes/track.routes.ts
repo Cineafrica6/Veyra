@@ -3,6 +3,7 @@ import {
     createTrack,
     listTracks,
     getTrack,
+    getMyTracks,
     updateTrack,
     joinTrack,
     regenerateInvite,
@@ -11,6 +12,10 @@ import {
     addTrackMember,
     banMember,
     unbanMember,
+    suspendMember,
+    unsuspendMember,
+    promoteToAdmin,
+    demoteFromAdmin,
 } from '../controllers';
 import {
     authenticate,
@@ -52,6 +57,20 @@ router.use(authenticate);
  *         description: Already a member
  */
 router.post('/join', joinTrack);
+
+/**
+ * @swagger
+ * /api/tracks/my-tracks:
+ *   get:
+ *     summary: Get all tracks the current user is a member of
+ *     tags: [Tracks]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: List of user's tracks
+ */
+router.get('/my-tracks', getMyTracks);
 
 /**
  * @swagger
@@ -363,5 +382,13 @@ router.post('/:id/members/:targetUserId/ban', banMember);
  *         description: Member unbanned
  */
 router.delete('/:id/members/:targetUserId/ban', unbanMember);
+
+// Suspend/Unsuspend routes
+router.post('/:id/members/:targetUserId/suspend', suspendMember);
+router.delete('/:id/members/:targetUserId/suspend', unsuspendMember);
+
+// Promote/Demote routes
+router.post('/:id/members/:targetUserId/promote', promoteToAdmin);
+router.delete('/:id/members/:targetUserId/promote', demoteFromAdmin);
 
 export default router;
