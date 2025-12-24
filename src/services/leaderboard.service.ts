@@ -86,11 +86,17 @@ export const getWeeklyLeaderboard = async (
 
     // Apply streak multiplier and calculate final score, then sort and add rank
     const leaderboardWithMultipliers = results.map((entry) => {
-        const multiplier = getStreakMultiplier(entry.currentStreak);
-        const totalScore = Math.round(entry.baseScore * multiplier * 100) / 100;
+        const streakMultiplier = getStreakMultiplier(entry.currentStreak);
+        const totalScore = Math.round(entry.baseScore * streakMultiplier * 100) / 100;
         return {
-            ...entry,
-            multiplier,
+            userId: entry.userId,
+            userName: entry.displayName, // Map to userName for frontend
+            avatarUrl: entry.avatarUrl,
+            baseScore: entry.baseScore,
+            submissionCount: entry.submissionCount,
+            currentStreak: entry.currentStreak,
+            longestStreak: entry.longestStreak,
+            streakMultiplier, // Frontend expects this name
             totalScore,
         };
     });

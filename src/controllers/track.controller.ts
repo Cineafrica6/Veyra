@@ -88,34 +88,30 @@ export const listTracks = async (
     const userId = req.user!._id;
     const membership = req.orgMembership;
 
-    let tracks;
+    // Get all tracks in the organization
+    const tracks = await Track.find({ organizationId: orgId }).lean();
 
-    if (membership?.role === 'owner' || membership?.role === 'admin') {
-        // Admins see all tracks
-        tracks = await Track.find({ organizationId: orgId }).lean();
-    } else {
-        // Members see only joined tracks
-        const trackMemberships = await TrackMembership.find({ userId }).lean();
-        const trackIds = trackMemberships.map((m) => m.trackId);
-        tracks = await Track.find({
-            organizationId: orgId,
-            _id: { $in: trackIds },
-        }).lean();
-    }
+    // Get user's track memberships to determine which tracks they've joined
+    const trackMemberships = await TrackMembership.find({ userId }).lean();
+    const joinedTrackIds = new Set(trackMemberships.map((m) => m.trackId.toString()));
 
-    // Don't expose invite codes to regular members
+    const isAdminOrOwner = membership?.role === 'owner' || membership?.role === 'admin';
+
+    // Map tracks with isMember flag and conditionally expose admin fields
     const result = tracks.map((t: any) => ({
         id: t._id,
         name: t.name,
         description: t.description,
         weekStartDay: t.weekStartDay,
-        minScore: t.minScore,
-        maxScore: t.maxScore,
         memberCount: t.memberCount,
-        ...(membership?.role !== 'member' && {
+        isMember: joinedTrackIds.has(t._id.toString()),
+        // Only expose invite codes and admin fields to org admins/owners
+        ...(isAdminOrOwner && {
             inviteCode: t.inviteCode,
             inviteEnabled: t.inviteEnabled,
             maxMembers: t.maxMembers,
+            minScore: t.minScore,
+            maxScore: t.maxScore,
         }),
     }));
 
@@ -203,8 +199,23 @@ export const getTrack = async (
         organizationId: track.organizationId,
     });
 
-    const isAdmin =
-        orgMembership?.role === 'owner' || orgMembership?.role === 'admin';
+    // Check if user is admin of this track
+    const trackMembership = await TrackMembership.findOne({
+        userId: req.user!._id,
+        trackId: id,
+    });
+
+    const isOrgAdmin = orgMembership?.role === 'owner' || orgMembership?.role === 'admin';
+    const isTrackAdmin = trackMembership?.role === 'admin';
+    const isAdmin = isOrgAdmin || isTrackAdmin;
+
+    // Determine user's effective role
+    let userRole = 'member';
+    if (orgMembership?.role === 'owner') {
+        userRole = 'owner';
+    } else if (isOrgAdmin || isTrackAdmin) {
+        userRole = 'admin';
+    }
 
     sendSuccess(res, {
         id: track._id,
@@ -214,6 +225,7 @@ export const getTrack = async (
         minScore: track.minScore,
         maxScore: track.maxScore,
         memberCount: track.memberCount,
+        role: userRole,
         ...(isAdmin && {
             inviteCode: track.inviteCode,
             inviteEnabled: track.inviteEnabled,
@@ -309,6 +321,68 @@ export const joinTrack = async (
             organizationId: track.organizationId,
             role: 'member',
         });
+    }
+
+    // Check if already a track member
+    const existingMembership = await TrackMembership.findOne({
+        userId,
+        trackId: track._id,
+    });
+
+    if (existingMembership) {
+        sendError(res, 'You are already a member of this track', 409);
+        return;
+    }
+
+    // Create track membership
+    await TrackMembership.create({
+        userId,
+        trackId: track._id,
+    });
+
+    // Increment member count
+    track.memberCount += 1;
+    await track.save();
+
+    sendSuccess(res, {
+        trackId: track._id,
+        trackName: track.name,
+        message: 'Successfully joined the track',
+    });
+};
+
+/**
+ * POST /api/tracks/:id/join
+ * Join a track directly (for org members only - no invite code needed)
+ */
+export const joinTrackDirect = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+    const userId = req.user!._id;
+
+    const track = await Track.findById(id);
+    if (!track) {
+        sendNotFound(res, 'Track not found');
+        return;
+    }
+
+    // Check if user is member of the organization
+    const orgMembership = await OrganizationMembership.findOne({
+        userId,
+        organizationId: track.organizationId,
+    });
+
+    if (!orgMembership) {
+        sendForbidden(res, 'You must be a member of the organization to join this track');
+        return;
+    }
+
+    // Check max members
+    if (track.maxMembers && track.memberCount >= track.maxMembers) {
+        sendError(res, 'This track has reached its member limit');
+        return;
     }
 
     // Check if already a track member

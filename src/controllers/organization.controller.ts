@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { Organization, OrganizationMembership, User } from '../models';
+import { Organization, OrganizationMembership, User, Track } from '../models';
 import { AuthenticatedRequest, OrgRole } from '../types';
 import {
     sendSuccess,
@@ -19,13 +19,22 @@ export const createOrganization = async (
     req: AuthenticatedRequest,
     res: Response
 ): Promise<void> => {
-    const { name } = req.body;
+    const { name, sudoPassword } = req.body;
     const userId = req.user!._id;
 
     if (!name || name.trim().length < 2) {
         sendError(res, 'Organization name must be at least 2 characters');
         return;
     }
+
+    if (!sudoPassword || sudoPassword.length < 6) {
+        sendError(res, 'Sudo password must be at least 6 characters');
+        return;
+    }
+
+    // Hash the sudo password
+    const bcrypt = require('bcryptjs');
+    const sudoPasswordHash = await bcrypt.hash(sudoPassword, 10);
 
     // Generate slug
     const baseSlug = name
@@ -41,11 +50,12 @@ export const createOrganization = async (
         counter++;
     }
 
-    // Create organization
+    // Create organization with sudo password
     const organization = await Organization.create({
         name: name.trim(),
         slug,
         ownerId: userId,
+        sudoPasswordHash,
     });
 
     // Create owner membership
@@ -77,12 +87,28 @@ export const listOrganizations = async (
         .populate('organizationId')
         .lean();
 
-    const organizations = memberships.map((m: any) => ({
-        id: m.organizationId._id,
-        name: m.organizationId.name,
-        slug: m.organizationId.slug,
-        role: m.role,
-        joinedAt: m.joinedAt,
+    // Filter out memberships where organization was deleted
+    const validMemberships = memberships.filter((m: any) => m.organizationId != null);
+
+    // Get member and track counts for each org
+    const organizations = await Promise.all(validMemberships.map(async (m: any) => {
+        const orgId = m.organizationId._id;
+
+        // Count members
+        const memberCount = await OrganizationMembership.countDocuments({ organizationId: orgId });
+
+        // Count tracks
+        const trackCount = await Track.countDocuments({ organizationId: orgId });
+
+        return {
+            id: orgId,
+            name: m.organizationId.name,
+            slug: m.organizationId.slug,
+            role: m.role,
+            joinedAt: m.joinedAt,
+            memberCount,
+            trackCount,
+        };
     }));
 
     sendSuccess(res, organizations);
@@ -164,8 +190,13 @@ export const listMembers = async (
         .populate('userId', 'email displayName avatarUrl')
         .lean();
 
-    const members = memberships.map((m: any) => ({
-        userId: m.userId._id,
+    // Filter out memberships where userId population failed (user deleted)
+    const validMemberships = memberships.filter((m: any) => m.userId != null);
+
+    const members = validMemberships.map((m: any) => ({
+        id: m._id?.toString(),
+        oderId: m._id?.toString(), // Typo compatibility with frontend
+        userId: m.userId._id?.toString(),
         email: m.userId.email,
         displayName: m.userId.displayName,
         avatarUrl: m.userId.avatarUrl,
@@ -326,6 +357,38 @@ export const removeMember = async (
     await membership.deleteOne();
 
     sendSuccess(res, { message: 'Member removed successfully' });
+};
+
+/**
+ * POST /api/organizations/:id/leave
+ * Leave organization (cannot be used by owners)
+ */
+export const leaveOrganization = async (
+    req: AuthenticatedRequest,
+    res: Response
+): Promise<void> => {
+    const { id } = req.params;
+    const userId = req.user!._id;
+
+    const membership = await OrganizationMembership.findOne({
+        userId,
+        organizationId: id,
+    });
+
+    if (!membership) {
+        sendNotFound(res, 'You are not a member of this organization');
+        return;
+    }
+
+    // Owners cannot leave - they must transfer ownership or delete org
+    if (membership.role === 'owner') {
+        sendError(res, 'Owners cannot leave the organization. Transfer ownership first or delete the organization.');
+        return;
+    }
+
+    await membership.deleteOne();
+
+    sendSuccess(res, { message: 'You have left the organization' });
 };
 
 /**

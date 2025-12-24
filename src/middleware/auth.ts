@@ -50,12 +50,20 @@ export const authenticate = async (
         }
 
         // Get user from Clerk to verify they exist
+        let clerkUser;
         try {
-            await clerkClient.users.getUser(decoded.sub);
+            clerkUser = await clerkClient.users.getUser(decoded.sub);
         } catch {
             sendUnauthorized(res, 'User not found in Clerk');
             return;
         }
+
+        // Build display name from Clerk user data
+        const clerkDisplayName = clerkUser.firstName
+            ? `${clerkUser.firstName}${clerkUser.lastName ? ' ' + clerkUser.lastName : ''}`
+            : clerkUser.username || undefined;
+        const clerkEmail = clerkUser.emailAddresses?.[0]?.emailAddress || decoded.email || `${decoded.sub}@clerk.user`;
+        const clerkAvatarUrl = clerkUser.imageUrl || decoded.imageUrl;
 
         // Find or create user in our database
         let user = await User.findOne({ clerkId: decoded.sub });
@@ -64,12 +72,15 @@ export const authenticate = async (
             // Create user on first authentication
             user = await User.create({
                 clerkId: decoded.sub,
-                email: decoded.email || `${decoded.sub}@clerk.user`,
-                displayName: decoded.firstName
-                    ? `${decoded.firstName}${decoded.lastName ? ' ' + decoded.lastName : ''}`
-                    : undefined,
-                avatarUrl: decoded.imageUrl,
+                email: clerkEmail,
+                displayName: clerkDisplayName,
+                avatarUrl: clerkAvatarUrl,
             });
+        } else if (!user.displayName && clerkDisplayName) {
+            // Update existing user if displayName is missing
+            user.displayName = clerkDisplayName;
+            user.avatarUrl = clerkAvatarUrl || user.avatarUrl;
+            await user.save();
         }
 
         req.user = user as IUser;

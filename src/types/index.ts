@@ -83,13 +83,14 @@ export interface ISubmission extends Document {
     _id: Types.ObjectId;
     userId: Types.ObjectId;
     trackId: Types.ObjectId;
-    weekStart: Date;
+    submissionDate: Date; // The specific day of submission
+    weekStart: Date; // For week grouping (leaderboard)
     weekEnd: Date;
     description: string;
     proofUrl: string;
     proofType: ProofType;
     status: SubmissionStatus;
-    score?: number;
+    score?: number; // Fixed at 10 when approved
     verifiedBy?: Types.ObjectId;
     verifiedAt?: Date;
     createdAt: Date;
@@ -112,10 +113,14 @@ export interface WeekBoundaries {
 export interface LeaderboardEntry {
     rank: number;
     userId: Types.ObjectId;
-    displayName: string;
+    userName: string; // Display name or email
     avatarUrl?: string;
+    baseScore: number;
     totalScore: number;
     submissionCount: number;
+    currentStreak: number;
+    longestStreak: number;
+    streakMultiplier: number;
 }
 
 // Daily Check-In types

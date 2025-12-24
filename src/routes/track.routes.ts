@@ -6,6 +6,7 @@ import {
     getMyTracks,
     updateTrack,
     joinTrack,
+    joinTrackDirect,
     regenerateInvite,
     toggleInvite,
     listTrackMembers,
@@ -173,6 +174,30 @@ router.get('/org/:orgId', requireOrgRole('owner', 'admin', 'member'), listTracks
  *         description: Not a track member
  */
 router.get('/:id', requireTrackMember, getTrack);
+
+/**
+ * @swagger
+ * /api/tracks/{id}/join:
+ *   post:
+ *     summary: Join a track directly (org members only)
+ *     tags: [Tracks]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Successfully joined track
+ *       403:
+ *         description: Not an org member
+ *       409:
+ *         description: Already a member
+ */
+router.post('/:id/join', authenticate, joinTrackDirect);
 
 /**
  * @swagger

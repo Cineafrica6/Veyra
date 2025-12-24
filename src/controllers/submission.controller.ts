@@ -4,9 +4,12 @@ import { AuthenticatedRequest } from '../types';
 import { sendSuccess, sendCreated, sendError, sendNotFound, getWeekBoundaries as getWeekBoundariesUtil, isPreviousWeek } from '../utils';
 import { getCurrentWeekBoundaries, getWeekBoundaries } from '../services';
 
+// Fixed points for approved submissions
+const DAILY_SUBMISSION_POINTS = 10;
+
 /**
  * POST /api/tracks/:trackId/submissions
- * Submit weekly progress (one per week per user per track)
+ * Submit daily progress (one per day per user per track)
  */
 export const createSubmission = async (
     req: AuthenticatedRequest,
@@ -39,20 +42,24 @@ export const createSubmission = async (
         return;
     }
 
-    // Get current week boundaries
+    // Get today's date (normalized to start of day)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Get current week boundaries (for leaderboard grouping)
     const { start: weekStart, end: weekEnd } = getCurrentWeekBoundaries(
         track.weekStartDay
     );
 
-    // Check if user already submitted this week
+    // Check if user already submitted today
     const existingSubmission = await Submission.findOne({
         userId,
         trackId,
-        weekStart,
+        submissionDate: today,
     });
 
     if (existingSubmission) {
-        sendError(res, 'You have already submitted for this week', 409);
+        sendError(res, 'You have already submitted today. Come back tomorrow!', 409);
         return;
     }
 
@@ -60,6 +67,7 @@ export const createSubmission = async (
     const submission = await Submission.create({
         userId,
         trackId,
+        submissionDate: today,
         weekStart,
         weekEnd,
         description: description.trim(),
@@ -70,6 +78,7 @@ export const createSubmission = async (
 
     sendCreated(res, {
         id: submission._id,
+        submissionDate: submission.submissionDate,
         weekStart: submission.weekStart,
         weekEnd: submission.weekEnd,
         description: submission.description,
@@ -279,13 +288,14 @@ export const getSubmission = async (
 /**
  * POST /api/submissions/:id/verify
  * Verify (approve/reject) a submission (admin only)
+ * Approved submissions receive a flat 10 points
  */
 export const verifySubmission = async (
     req: AuthenticatedRequest,
     res: Response
 ): Promise<void> => {
     const { id } = req.params;
-    const { status, score } = req.body;
+    const { status } = req.body;
     const verifierId = req.user!._id;
 
     if (!['approved', 'rejected'].includes(status)) {
@@ -299,29 +309,33 @@ export const verifySubmission = async (
         return;
     }
 
-    // Get track to validate score range
+    // Authorization: Check if user is admin/owner of the track's organization
     const track = await Track.findById(submission.trackId);
     if (!track) {
         sendNotFound(res, 'Track not found');
         return;
     }
 
-    // If approving, score is required
+    const orgMembership = await OrganizationMembership.findOne({
+        userId: verifierId,
+        organizationId: track.organizationId,
+        role: { $in: ['owner', 'admin'] },
+    });
+
+    if (!orgMembership) {
+        sendError(res, 'Only organization admins can verify submissions', 403);
+        return;
+    }
+
+    // Check if already verified
+    if (submission.status !== 'pending') {
+        sendError(res, 'Submission has already been verified');
+        return;
+    }
+
+    // If approving, give fixed 10 points
     if (status === 'approved') {
-        if (score === undefined || score === null) {
-            sendError(res, 'Score is required when approving');
-            return;
-        }
-
-        if (score < track.minScore || score > track.maxScore) {
-            sendError(
-                res,
-                `Score must be between ${track.minScore} and ${track.maxScore}`
-            );
-            return;
-        }
-
-        submission.score = score;
+        submission.score = DAILY_SUBMISSION_POINTS;
 
         // Update streak for the user
         const membership = await TrackMembership.findOne({
@@ -330,8 +344,9 @@ export const verifySubmission = async (
         });
 
         if (membership) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
+            // Use the submission date for streak calculation
+            const submissionDate = new Date(submission.submissionDate);
+            submissionDate.setHours(0, 0, 0, 0);
 
             // Check if this is consecutive to last submission (daily streak)
             const lastDate = membership.lastSubmissionDate;
@@ -339,14 +354,14 @@ export const verifySubmission = async (
                 const lastDateStart = new Date(lastDate);
                 lastDateStart.setHours(0, 0, 0, 0);
 
-                const yesterday = new Date(today);
-                yesterday.setDate(yesterday.getDate() - 1);
+                const dayBefore = new Date(submissionDate);
+                dayBefore.setDate(dayBefore.getDate() - 1);
 
-                if (lastDateStart.getTime() === yesterday.getTime()) {
-                    // Continue streak (submitted yesterday)
+                if (lastDateStart.getTime() === dayBefore.getTime()) {
+                    // Continue streak (submitted day before)
                     membership.currentStreak += 1;
-                } else if (lastDateStart.getTime() !== today.getTime()) {
-                    // Reset streak (not yesterday and not today)
+                } else if (lastDateStart.getTime() !== submissionDate.getTime()) {
+                    // Reset streak (not consecutive)
                     membership.currentStreak = 1;
                 }
                 // If same day, don't change streak
@@ -361,9 +376,12 @@ export const verifySubmission = async (
             }
 
             // Update last submission date
-            membership.lastSubmissionDate = today;
+            membership.lastSubmissionDate = submissionDate;
             await membership.save();
         }
+    } else {
+        // Rejected - no points
+        submission.score = 0;
     }
 
     submission.status = status;

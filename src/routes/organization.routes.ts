@@ -11,6 +11,7 @@ import {
     joinOrganization,
     regenerateInvite,
     toggleInvite,
+    leaveOrganization,
 } from '../controllers';
 import { authenticate, requireOrgRole } from '../middleware';
 
@@ -202,6 +203,28 @@ router.post('/:id/regenerate-invite', requireOrgRole('owner', 'admin'), regenera
  *         description: Status updated
  */
 router.patch('/:id/invite', requireOrgRole('owner', 'admin'), toggleInvite);
+
+/**
+ * @swagger
+ * /api/organizations/{id}/leave:
+ *   post:
+ *     summary: Leave organization (members and admins only)
+ *     tags: [Organizations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Left organization successfully
+ *       400:
+ *         description: Owners cannot leave
+ */
+router.post('/:id/leave', requireOrgRole('owner', 'admin', 'member'), leaveOrganization);
 
 /**
  * @swagger

@@ -31,14 +31,15 @@ export function getWeekBoundaries(date: Date, weekStartDay: number = 1): {
 
 /**
  * Calculate streak multiplier based on current streak
- * Multiplier is 1.12x per consecutive day
- * Formula: 1.0 + (streak_days * 0.12)
- * Max multiplier is 3.0 (at ~17 day streak)
+ * Starts at 1.12x and increases by 0.1x per consecutive day
+ * Formula: 1.12 + ((streak_days - 1) * 0.1) for streak >= 1
+ * Example: Day 1 = 1.12x, Day 2 = 1.22x, Day 3 = 1.32x, etc.
+ * Max multiplier is 3.0
  */
 export function getStreakMultiplier(currentStreak: number): number {
     if (currentStreak <= 0) return 1.0;
-    const multiplier = 1.0 + (currentStreak * 0.12);
-    return Math.min(multiplier, 3.0); // Cap at 3x
+    const multiplier = 1.12 + ((currentStreak - 1) * 0.1);
+    return Math.min(Math.round(multiplier * 100) / 100, 3.0); // Round to 2 decimals, cap at 3x
 }
 
 /**

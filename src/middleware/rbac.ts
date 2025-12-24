@@ -22,6 +22,11 @@ export const requireOrgRole = (...allowedRoles: OrgRole[]) => {
                 return;
             }
 
+            if (!orgId || orgId === 'undefined') {
+                sendForbidden(res, 'Organization ID is required');
+                return;
+            }
+
             const membership = await OrganizationMembership.findOne({
                 userId,
                 organizationId: orgId,

@@ -13,6 +13,10 @@ const submissionSchema = new Schema<ISubmission>(
             ref: 'Track',
             required: true,
         },
+        submissionDate: {
+            type: Date,
+            required: true,
+        },
         weekStart: {
             type: Date,
             required: true,
@@ -45,6 +49,7 @@ const submissionSchema = new Schema<ISubmission>(
         score: {
             type: Number,
             min: 0,
+            default: 0,
         },
         verifiedBy: {
             type: Schema.Types.ObjectId,
@@ -59,9 +64,9 @@ const submissionSchema = new Schema<ISubmission>(
     }
 );
 
-// Compound index to enforce one submission per user per track per week
+// Compound index to enforce one submission per user per track per DAY
 submissionSchema.index(
-    { userId: 1, trackId: 1, weekStart: 1 },
+    { userId: 1, trackId: 1, submissionDate: 1 },
     { unique: true }
 );
 
